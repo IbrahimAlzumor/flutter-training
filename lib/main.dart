@@ -1,11 +1,11 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
-void main() {
-  runApp(const MyApp());
-}
+void main() => runApp(const MyApp());
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -13,626 +13,824 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Dynamic Invoice Generator',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        scaffoldBackgroundColor: Colors.grey[200],
-        useMaterial3: true,
-      ),
-      home: const PrintPreviewScreen(),
       debugShowCheckedModeBanner: false,
+      theme: ThemeData(useMaterial3: true),
+      home: const InvoiceScreen(),
     );
   }
 }
 
-enum PrintAlignment { left, center, right }
+enum ColAlign { left, center, right }
 
-class TableColumn {
-  String label;
-  String key;
-  PrintAlignment alignment;
-  double widthWeight;
+class ColumnSpec {
+  final String key;
+  final String label;
+  final int weight;
+  final ColAlign align;
 
-  TableColumn({
-    required this.label,
+  const ColumnSpec({
     required this.key,
-    this.alignment = PrintAlignment.left,
-    this.widthWeight = 1.0,
+    required this.label,
+    this.weight = 1,
+    this.align = ColAlign.left,
   });
+
+  ColumnSpec merge(ColumnSpec? other) {
+    if (other == null) return this;
+    return ColumnSpec(
+      key: other.key,
+      label: other.label.isNotEmpty ? other.label : label,
+      weight: other.weight > 0 ? other.weight : weight,
+      align: other.align,
+    );
+  }
 }
 
-class PrintableItem {
-  final String text;
-  final TextStyle style;
-  final double y;
-  final double? guideX;
-  final PrintAlignment alignment;
-  final bool isSeparator;
-  final double width;
-  Rect finalRect = Rect.zero;
-  bool isValid = true;
+class Labels {
+  final String titleEn;
+  final String titleAr;
+  final String invoiceTo;
+  final String invoiceCurrency;
+  final String copy;
+  final String notes;
+  final String authorizedSignature;
+  final String totalDue;
+  final String pageText;
 
-  PrintableItem({
-    required this.text,
-    required this.y,
-    this.guideX,
-    this.style = const TextStyle(
-      fontSize: 12,
-      color: Colors.black,
-      fontFamily: 'Roboto',
-    ),
-    this.alignment = PrintAlignment.left,
-    this.isSeparator = false,
-    this.width = 0,
+  const Labels({
+    required this.titleEn,
+    required this.titleAr,
+    required this.invoiceTo,
+    required this.invoiceCurrency,
+    required this.copy,
+    required this.notes,
+    required this.authorizedSignature,
+    required this.totalDue,
+    required this.pageText,
   });
+
+  static const defaults = Labels(
+    titleEn: "Tax Invoice",
+    titleAr: "فاتورة ضريبية",
+    invoiceTo: "INVOICE TO:",
+    invoiceCurrency: "INVOICE CURRENCY:",
+    copy: "Copy",
+    notes: "NOTES",
+    authorizedSignature: "Authorized Signature",
+    totalDue: "TOTAL DUE",
+    pageText: "Page 1/1",
+  );
+
+  Labels merge(Labels? other) {
+    if (other == null) return this;
+    return Labels(
+      titleEn: other.titleEn.isNotEmpty ? other.titleEn : titleEn,
+      titleAr: other.titleAr.isNotEmpty ? other.titleAr : titleAr,
+      invoiceTo: other.invoiceTo.isNotEmpty ? other.invoiceTo : invoiceTo,
+      invoiceCurrency: other.invoiceCurrency.isNotEmpty
+          ? other.invoiceCurrency
+          : invoiceCurrency,
+      copy: other.copy.isNotEmpty ? other.copy : copy,
+      notes: other.notes.isNotEmpty ? other.notes : notes,
+      authorizedSignature: other.authorizedSignature.isNotEmpty
+          ? other.authorizedSignature
+          : authorizedSignature,
+      totalDue: other.totalDue.isNotEmpty ? other.totalDue : totalDue,
+      pageText: other.pageText.isNotEmpty ? other.pageText : pageText,
+    );
+  }
 }
 
-class PrintPreviewScreen extends StatefulWidget {
-  const PrintPreviewScreen({super.key});
+class LayoutSpec {
+  final PdfPageFormat pageFormat;
+  final pw.EdgeInsets margin;
+  final double gapSm;
+  final double gapMd;
+  final double lineThickness;
 
-  @override
-  State<PrintPreviewScreen> createState() => _PrintPreviewScreenState();
+  final double titleSize;
+  final double smallSize;
+  final double tableHeaderSize;
+  final double tableCellSize;
+
+  const LayoutSpec({
+    required this.pageFormat,
+    required this.margin,
+    required this.gapSm,
+    required this.gapMd,
+    required this.lineThickness,
+    required this.titleSize,
+    required this.smallSize,
+    required this.tableHeaderSize,
+    required this.tableCellSize,
+  });
+
+  static LayoutSpec defaults() => LayoutSpec(
+    pageFormat: PdfPageFormat.a4,
+    margin: const pw.EdgeInsets.fromLTRB(28, 24, 28, 24),
+    gapSm: 6,
+    gapMd: 12,
+    lineThickness: 1,
+    titleSize: 18,
+    smallSize: 8,
+    tableHeaderSize: 8.5,
+    tableCellSize: 8.5,
+  );
+
+  LayoutSpec merge(LayoutSpec? other) {
+    if (other == null) return this;
+    return LayoutSpec(
+      pageFormat: other.pageFormat,
+      margin: other.margin,
+      gapSm: other.gapSm,
+      gapMd: other.gapMd,
+      lineThickness: other.lineThickness,
+      titleSize: other.titleSize,
+      smallSize: other.smallSize,
+      tableHeaderSize: other.tableHeaderSize,
+      tableCellSize: other.tableCellSize,
+    );
+  }
 }
 
-class _PrintPreviewScreenState extends State<PrintPreviewScreen> {
-  final double pageWidth = 600;
-  final double pageHeight = 840;
-  final EdgeInsets pageMargins = const EdgeInsets.all(40.0);
+class MetaSpec {
+  final Map<String, String> left;
+  final Map<String, String> right;
 
-  List<PrintableItem> laidOutItems = [];
+  const MetaSpec({required this.left, required this.right});
 
-  List<TableColumn> activeColumns = [
-    TableColumn(
-      label: "DESCRIPTION",
-      key: "description",
-      widthWeight: 1.0,
-      alignment: PrintAlignment.left,
-    ),
-    TableColumn(
-      label: "QTY",
-      key: "qty",
-      widthWeight: 1.0,
-      alignment: PrintAlignment.right,
-    ),
-    TableColumn(
-      label: "PRICE",
-      key: "price",
-      widthWeight: 1.0,
-      alignment: PrintAlignment.right,
-    ),
-    TableColumn(
-      label: "TOTAL",
-      key: "total",
-      widthWeight: 1.0,
-      alignment: PrintAlignment.right,
-    ),
-  ];
+  static MetaSpec defaults() => const MetaSpec(
+    left: {"name": "Ibrahim", "area": "Main Area English"},
+    right: {
+      "INVOICE NUMBER": "2100000005",
+      "INVOICE DATE": "22/09/2026",
+      "CUSTOMER ID": "0000034",
+    },
+  );
 
-  final List<Map<String, dynamic>> invoiceData = [
-    {
-      "description": "Web Development",
-      "qty": 1,
-      "price": 1200.00,
-      "unit": "Project",
-      "total": 1200.00,
-    },
-    {
-      "description": "Hosting Setup",
-      "qty": 1,
-      "price": 250.00,
-      "unit": "Year",
-      "total": 250.00,
-    },
-    {
-      "description": "Domain Reg",
-      "qty": 2,
-      "price": 15.00,
-      "unit": "Year",
-      "total": 30.00,
-    },
-    {
-      "description": "Consultation",
-      "qty": 5,
-      "price": 80.00,
-      "unit": "Hour",
-      "total": 400.00,
-    },
-  ];
+  MetaSpec merge(MetaSpec? other) {
+    if (other == null) return this;
+    return MetaSpec(
+      left: {...left, ...other.left},
+      right: {...right, ...other.right},
+    );
+  }
+}
 
-  @override
-  void initState() {
-    super.initState();
-    _createContentAndPerformLayout();
+class BlocksSpec {
+  final bool showArabicTitle;
+  final bool showCopy;
+  final bool showCurrency;
+  final bool showNotes;
+  final bool showBarcode;
+  final bool showSignatures;
+  final bool showFooter;
+
+  const BlocksSpec({
+    required this.showArabicTitle,
+    required this.showCopy,
+    required this.showCurrency,
+    required this.showNotes,
+    required this.showBarcode,
+    required this.showSignatures,
+    required this.showFooter,
+  });
+
+  static const defaults = BlocksSpec(
+    showArabicTitle: true,
+    showCopy: true,
+    showCurrency: true,
+    showNotes: true,
+    showBarcode: true,
+    showSignatures: true,
+    showFooter: true,
+  );
+
+  BlocksSpec merge(BlocksSpec? other) {
+    if (other == null) return this;
+    return BlocksSpec(
+      showArabicTitle: other.showArabicTitle,
+      showCopy: other.showCopy,
+      showCurrency: other.showCurrency,
+      showNotes: other.showNotes,
+      showBarcode: other.showBarcode,
+      showSignatures: other.showSignatures,
+      showFooter: other.showFooter,
+    );
+  }
+}
+
+class InvoiceSpec {
+  final Labels labels;
+  final LayoutSpec layout;
+  final MetaSpec meta;
+  final BlocksSpec blocks;
+
+  final List<ColumnSpec> columns;
+  final List<Map<String, dynamic>> rows;
+
+  final String currencyValue;
+  final String barcodeValue;
+  final String footerLeft;
+  final String footerRight;
+  final String footerUrl;
+
+  const InvoiceSpec({
+    required this.labels,
+    required this.layout,
+    required this.meta,
+    required this.blocks,
+    required this.columns,
+    required this.rows,
+    required this.currencyValue,
+    required this.barcodeValue,
+    required this.footerLeft,
+    required this.footerRight,
+    required this.footerUrl,
+  });
+
+  static InvoiceSpec defaults() => InvoiceSpec(
+    labels: Labels.defaults,
+    layout: LayoutSpec.defaults(),
+    meta: MetaSpec.defaults(),
+    blocks: BlocksSpec.defaults,
+    columns: const [
+      ColumnSpec(
+        key: "itemNo",
+        label: "ITEM NO",
+        weight: 1,
+        align: ColAlign.left,
+      ),
+      ColumnSpec(
+        key: "description",
+        label: "PRODUCT DESCRIPTION",
+        weight: 1,
+        align: ColAlign.left,
+      ),
+      ColumnSpec(key: "unit", label: "UNIT", weight: 1, align: ColAlign.center),
+      ColumnSpec(
+        key: "qty",
+        label: "QUANTITY",
+        weight: 1,
+        align: ColAlign.right,
+      ),
+      ColumnSpec(
+        key: "discount",
+        label: "DISCOUNT PRICE",
+        weight: 1,
+        align: ColAlign.right,
+      ),
+      ColumnSpec(
+        key: "total",
+        label: "LINE TOTAL",
+        weight: 1,
+        align: ColAlign.right,
+      ),
+    ],
+    rows: const [
+      {
+        "itemNo": "000000019",
+        "description":
+            "7299012910\nINVOICE NO: 2023 1234565\nوصف عربي تجريبي للسطر\n1256423554",
+        "unit": "Piece",
+        "qty": 1,
+        "discount": 50.62,
+        "total": 4.31,
+      },
+    ],
+    currencyValue: "ILS",
+    barcodeValue: "2100000005",
+    footerLeft: "Bisan Enterprise Demo",
+    footerRight: "بيسان انتربرايز - نسخة تجريبية",
+    footerUrl: "https://qa.bisan.com:3333/login.html",
+  );
+
+  InvoiceSpec merge(InvoiceSpec? other) {
+    if (other == null) return this;
+
+    final mergedColumns = _mergeColumns(this.columns, other.columns);
+
+    final mergedRows = other.rows.isNotEmpty ? other.rows : rows;
+
+    return InvoiceSpec(
+      labels: labels.merge(other.labels),
+      layout: layout.merge(other.layout),
+      meta: meta.merge(other.meta),
+      blocks: blocks.merge(other.blocks),
+      columns: mergedColumns,
+      rows: mergedRows,
+      currencyValue: other.currencyValue.isNotEmpty
+          ? other.currencyValue
+          : currencyValue,
+      barcodeValue: other.barcodeValue.isNotEmpty
+          ? other.barcodeValue
+          : barcodeValue,
+      footerLeft: other.footerLeft.isNotEmpty ? other.footerLeft : footerLeft,
+      footerRight: other.footerRight.isNotEmpty
+          ? other.footerRight
+          : footerRight,
+      footerUrl: other.footerUrl.isNotEmpty ? other.footerUrl : footerUrl,
+    );
   }
 
-  String formatValue(dynamic value, String key) {
-    if (value == null) return "";
-    if (value is double && (key == 'price' || key == 'total')) {
-      return "\$${value.toStringAsFixed(2)}";
+  static List<ColumnSpec> _mergeColumns(
+    List<ColumnSpec> base,
+    List<ColumnSpec> incoming,
+  ) {
+    if (incoming.isEmpty) return base;
+
+    final baseByKey = {for (final c in base) c.key: c};
+    final result = <ColumnSpec>[];
+
+    for (final inc in incoming) {
+      final b = baseByKey[inc.key];
+      result.add((b ?? inc).merge(inc));
     }
-    return value.toString();
+
+    return result;
+  }
+}
+
+class InvoiceRenderer {
+  static pw.TextAlign _ta(ColAlign a) {
+    switch (a) {
+      case ColAlign.left:
+        return pw.TextAlign.left;
+      case ColAlign.center:
+        return pw.TextAlign.center;
+      case ColAlign.right:
+        return pw.TextAlign.right;
+    }
   }
 
-  void _createContentAndPerformLayout() {
-    final List<PrintableItem> items = [];
-    double currentY = pageMargins.top;
-    items.add(
-      PrintableItem(
-        text: "INVOICE",
-        y: currentY,
-        guideX: pageWidth / 2,
-        alignment: PrintAlignment.center,
-        style: const TextStyle(
-          fontSize: 28,
-          fontWeight: FontWeight.bold,
-          letterSpacing: 2,
-          color: Colors.black,
-        ),
-      ),
-    );
-    currentY += 60;
+  static String _fmt(dynamic v) {
+    if (v == null) return "";
+    if (v is num) return v.toStringAsFixed(2);
+    return v.toString();
+  }
 
-    items.add(
-      PrintableItem(
-        text: "Tech Solutions Inc.",
-        y: currentY,
-        guideX: pageMargins.left,
-        style: const TextStyle(
-          fontWeight: FontWeight.bold,
-          color: Colors.black,
-        ),
-      ),
-    );
-    items.add(
-      PrintableItem(
-        text: "Date: Oct 27, 2023",
-        y: currentY,
-        guideX: pageWidth - pageMargins.right,
-        alignment: PrintAlignment.right,
-      ),
-    );
-    currentY += 40;
-
-    double totalWeight = activeColumns.fold(
-      0,
-      (sum, col) => sum + col.widthWeight,
-    );
-    double printableWidth = pageWidth - pageMargins.left - pageMargins.right;
-
-    List<double> columnGuides = [];
-    double currentX = pageMargins.left;
-
-    for (var col in activeColumns) {
-      double colWidth = (col.widthWeight / totalWeight) * printableWidth;
-
-      if (col.alignment == PrintAlignment.left) {
-        columnGuides.add(currentX);
-      } else if (col.alignment == PrintAlignment.center) {
-        columnGuides.add(currentX + (colWidth / 2));
-      } else {
-        columnGuides.add(currentX + colWidth);
-      }
-
-      currentX += colWidth;
+  static double _sumColumn(List<Map<String, dynamic>> rows, String key) {
+    double s = 0;
+    for (final r in rows) {
+      final v = r[key];
+      if (v is num) s += v.toDouble();
     }
+    return s;
+  }
 
-    items.add(
-      PrintableItem(
-        text: "",
-        y: currentY,
-        isSeparator: true,
-        width: printableWidth,
-        guideX: pageMargins.left,
-      ),
+  static Future<Uint8List> buildPdf(
+    InvoiceSpec spec,
+    PdfPageFormat format,
+  ) async {
+    final s = InvoiceSpec.defaults().merge(spec);
+    final doc = pw.Document();
+
+    final titleStyle = pw.TextStyle(
+      fontSize: s.layout.titleSize,
+      fontWeight: pw.FontWeight.bold,
     );
-    currentY += 10;
-
-    final headerStyle = const TextStyle(
-      fontWeight: FontWeight.bold,
-      fontSize: 12,
-      color: Colors.black,
+    final smallBold = pw.TextStyle(
+      fontSize: s.layout.smallSize,
+      fontWeight: pw.FontWeight.bold,
     );
+    final small = pw.TextStyle(fontSize: s.layout.smallSize);
+    final headerStyle = pw.TextStyle(
+      fontSize: s.layout.tableHeaderSize,
+      fontWeight: pw.FontWeight.bold,
+    );
+    final cellStyle = pw.TextStyle(fontSize: s.layout.tableCellSize);
 
-    for (int i = 0; i < activeColumns.length; i++) {
-      items.add(
-        PrintableItem(
-          text: activeColumns[i].label,
-          y: currentY,
-          guideX: columnGuides[i],
-          alignment: activeColumns[i].alignment,
-          style: headerStyle,
+    pw.Widget hLine() =>
+        pw.Container(height: s.layout.lineThickness, color: PdfColors.black);
+
+    pw.Widget cell(String text, ColumnSpec col, pw.TextStyle style) {
+      return pw.Expanded(
+        flex: col.weight <= 0 ? 1 : col.weight,
+        child: pw.Container(
+          padding: const pw.EdgeInsets.symmetric(vertical: 2, horizontal: 2),
+          child: pw.Text(text, style: style, textAlign: _ta(col.align)),
         ),
       );
     }
 
-    currentY += 20;
-    items.add(
-      PrintableItem(
-        text: "",
-        y: currentY,
-        isSeparator: true,
-        width: printableWidth,
-        guideX: pageMargins.left,
-      ),
-    );
-    currentY += 20;
+    pw.Widget rowFromColumns(
+      List<ColumnSpec> cols,
+      Map<String, dynamic> row,
+      pw.TextStyle style,
+    ) {
+      return pw.Row(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [for (final c in cols) cell(_valueForCell(row, c), c, style)],
+      );
+    }
 
-    double subtotal = 0;
+    pw.Widget headerRow(List<ColumnSpec> cols) {
+      return pw.Row(
+        children: [for (final c in cols) cell(c.label, c, headerStyle)],
+      );
+    }
 
-    for (var rowData in invoiceData) {
-      if (rowData.containsKey('total')) {
-        subtotal += (rowData['total'] as num).toDouble();
-      }
-
-      for (int i = 0; i < activeColumns.length; i++) {
-        var col = activeColumns[i];
-        String text = formatValue(rowData[col.key], col.key);
-
-        items.add(
-          PrintableItem(
-            text: text,
-            y: currentY,
-            guideX: columnGuides[i],
-            alignment: col.alignment,
+    pw.Widget rightMetaBox(Map<String, String> meta) {
+      pw.Widget metaRow(String k, String v) {
+        return pw.Padding(
+          padding: const pw.EdgeInsets.symmetric(vertical: 2),
+          child: pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.Text(k, style: smallBold),
+              pw.Text(v, style: smallBold),
+            ],
           ),
         );
       }
-      currentY += 25;
-    }
 
-    currentY += 10;
-    items.add(
-      PrintableItem(
-        text: "",
-        y: currentY,
-        isSeparator: true,
-        width: printableWidth,
-        guideX: pageMargins.left,
-      ),
-    );
-    currentY += 20;
+      final entries = meta.entries.toList();
 
-    double totalGuide = pageWidth - pageMargins.right;
-    items.add(
-      PrintableItem(
-        text: "Total: ${formatValue(subtotal, 'total')}",
-        y: currentY,
-        guideX: totalGuide,
-        alignment: PrintAlignment.right,
-        style: const TextStyle(
-          fontWeight: FontWeight.bold,
-          fontSize: 14,
-          color: Colors.black,
+      return pw.Container(
+        width: 200,
+        padding: const pw.EdgeInsets.all(8),
+        decoration: pw.BoxDecoration(
+          border: pw.Border.all(color: PdfColors.black, width: 1),
         ),
-      ),
-    );
-
-    _performLayout(items);
-  }
-
-  void _performLayout(List<PrintableItem> items) {
-    final List<PrintableItem> processedItems = [];
-    for (var item in items) {
-      if (item.isSeparator) {
-        double finalX = item.guideX ?? pageMargins.left;
-        item.finalRect = Rect.fromLTWH(finalX, item.y, item.width, 1);
-        item.isValid = true;
-        processedItems.add(item);
-        continue;
-      }
-
-      final textPainter = TextPainter(
-        text: TextSpan(text: item.text, style: item.style),
-        textDirection: TextDirection.ltr,
-      )..layout(maxWidth: pageWidth);
-
-      final double textWidth = textPainter.width;
-      final double textHeight = textPainter.height;
-      final double effectiveGuideX = item.guideX ?? pageMargins.left;
-
-      double finalX;
-      switch (item.alignment) {
-        case PrintAlignment.left:
-          finalX = effectiveGuideX;
-          break;
-        case PrintAlignment.center:
-          finalX = effectiveGuideX - (textWidth / 2);
-          break;
-        case PrintAlignment.right:
-          finalX = effectiveGuideX - textWidth;
-          break;
-      }
-
-      bool isItemValid = true;
-      if (finalX < pageMargins.left ||
-          (finalX + textWidth) > (pageWidth - pageMargins.right)) {
-        isItemValid = false;
-      }
-      if (item.y < pageMargins.top ||
-          (item.y + textHeight) > (pageHeight - pageMargins.bottom)) {
-        isItemValid = false;
-      }
-
-      item.finalRect = Rect.fromLTWH(finalX, item.y, textWidth, textHeight);
-      item.isValid = isItemValid;
-      processedItems.add(item);
+        child: pw.Column(
+          children: [
+            for (int i = 0; i < entries.length; i++) ...[
+              metaRow(entries[i].key, entries[i].value),
+              if (i != entries.length - 1) hLine(),
+            ],
+          ],
+        ),
+      );
     }
 
-    setState(() {
-      laidOutItems = processedItems;
-    });
-  }
-
-  Future<void> _printDocument() async {
-    final doc = pw.Document();
-    final customPageFormat = PdfPageFormat(pageWidth, pageHeight, marginAll: 0);
+    final subTotal = _sumColumn(s.rows, "total");
+    final vat = 0.0;
+    final totalDue = subTotal + vat;
 
     doc.addPage(
       pw.Page(
-        pageFormat: customPageFormat,
-        margin: pw.EdgeInsets.zero,
-        build: (pw.Context context) {
-          return pw.Stack(
-            children: laidOutItems.where((item) => item.isValid).map((item) {
-              if (item.isSeparator) {
-                return pw.Positioned(
-                  left: item.finalRect.left,
-                  top: item.finalRect.top,
-                  child: pw.Container(
-                    width: item.finalRect.width,
-                    height: 1,
-                    color: PdfColors.black,
+        pageFormat: s.layout.pageFormat,
+        margin: s.layout.margin,
+        build: (_) {
+          return pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+            children: [
+              pw.Center(child: pw.Text(s.labels.titleEn, style: titleStyle)),
+              if (s.blocks.showArabicTitle) ...[
+                pw.SizedBox(height: 2),
+                pw.Center(child: pw.Text(s.labels.titleAr, style: smallBold)),
+              ],
+              pw.SizedBox(height: s.layout.gapMd),
+
+              pw.Row(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Expanded(
+                    child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Row(
+                          children: [
+                            pw.Text(s.labels.invoiceTo, style: smallBold),
+                            pw.SizedBox(width: 6),
+                            pw.Text(
+                              s.meta.left["name"] ?? "",
+                              style: smallBold,
+                            ),
+                          ],
+                        ),
+                        pw.SizedBox(height: 4),
+                        pw.Padding(
+                          padding: const pw.EdgeInsets.only(left: 62),
+                          child: pw.Text(
+                            s.meta.left["area"] ?? "",
+                            style: small,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                );
-              }
-              return pw.Positioned(
-                left: item.finalRect.left,
-                top: item.finalRect.top,
-                child: pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.start,
-                  children: item.text.split('\n').map((line) {
-                    return pw.Text(
-                      line,
-                      style: pw.TextStyle(
-                        fontSize: item.style.fontSize,
-                        fontWeight: item.style.fontWeight == FontWeight.bold
-                            ? pw.FontWeight.bold
-                            : pw.FontWeight.normal,
-                        color: PdfColor.fromInt(
-                          item.style.color?.value ?? Colors.black.value,
+                  pw.SizedBox(width: s.layout.gapMd),
+                  rightMetaBox(s.meta.right),
+                ],
+              ),
+
+              pw.SizedBox(height: s.layout.gapSm),
+
+              if (s.blocks.showCopy)
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.end,
+                  children: [pw.Text(s.labels.copy, style: small)],
+                ),
+
+              if (s.blocks.showCurrency)
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.end,
+                  children: [
+                    pw.Text(
+                      "${s.labels.invoiceCurrency}  ${s.currencyValue}",
+                      style: smallBold,
+                    ),
+                  ],
+                ),
+
+              pw.SizedBox(height: s.layout.gapMd),
+
+              hLine(),
+              pw.SizedBox(height: s.layout.gapSm),
+              headerRow(s.columns),
+              pw.SizedBox(height: s.layout.gapSm),
+              hLine(),
+              pw.SizedBox(height: s.layout.gapSm),
+
+              for (final r in s.rows) ...[
+                rowFromColumns(s.columns, r, cellStyle),
+                pw.SizedBox(height: s.layout.gapSm),
+              ],
+
+              hLine(),
+              pw.SizedBox(height: s.layout.gapMd),
+
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.end,
+                children: [
+                  pw.Container(
+                    width: 170,
+                    child: pw.Column(
+                      children: [
+                        _kv(
+                          "LINE TOTAL",
+                          subTotal.toStringAsFixed(2),
+                          smallBold,
+                          small,
+                        ),
+                        _kv(
+                          "VAT (0%)",
+                          vat.toStringAsFixed(2),
+                          smallBold,
+                          small,
+                        ),
+                        _kv(
+                          s.labels.totalDue,
+                          totalDue.toStringAsFixed(2),
+                          pw.TextStyle(
+                            fontSize: 9,
+                            fontWeight: pw.FontWeight.bold,
+                          ),
+                          pw.TextStyle(
+                            fontSize: 9,
+                            fontWeight: pw.FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+
+              pw.SizedBox(height: s.layout.gapMd),
+
+              pw.Row(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Expanded(
+                    child: s.blocks.showNotes
+                        ? pw.Column(
+                            crossAxisAlignment: pw.CrossAxisAlignment.start,
+                            children: [
+                              pw.Text(s.labels.notes, style: smallBold),
+                              pw.SizedBox(height: s.layout.gapSm),
+                              pw.Text(
+                                "Number of items:   ${s.rows.length}",
+                                style: small,
+                              ),
+                              pw.Text(
+                                "Issuing Warehouse:  Ramallah warehouse",
+                                style: small,
+                              ),
+                            ],
+                          )
+                        : pw.SizedBox(),
+                  ),
+                  pw.SizedBox(width: s.layout.gapMd),
+                  pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.end,
+                    children: [
+                      pw.Text(s.labels.authorizedSignature, style: small),
+                      pw.SizedBox(height: s.layout.gapSm),
+                      if (s.blocks.showBarcode)
+                        pw.BarcodeWidget(
+                          barcode: pw.Barcode.code128(),
+                          data: s.barcodeValue,
+                          width: 170,
+                          height: 34,
+                          drawText: false,
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+
+              pw.SizedBox(height: s.layout.gapMd),
+
+              if (s.blocks.showSignatures)
+                pw.Row(
+                  children: [
+                    for (int i = 1; i <= 3; i++) ...[
+                      pw.Expanded(
+                        child: pw.Column(
+                          children: [
+                            hLine(),
+                            pw.SizedBox(height: 4),
+                            pw.Text("Sign $i", style: small),
+                          ],
                         ),
                       ),
-                    );
-                  }).toList(),
+                      if (i != 3) pw.SizedBox(width: 18),
+                    ],
+                  ],
                 ),
-              );
-            }).toList(),
+
+              if (s.blocks.showFooter) ...[
+                pw.Spacer(),
+                hLine(),
+                pw.SizedBox(height: s.layout.gapSm),
+                pw.Row(
+                  children: [
+                    pw.Expanded(child: pw.Text(s.footerLeft, style: smallBold)),
+                    pw.Expanded(
+                      child: pw.Align(
+                        alignment: pw.Alignment.centerRight,
+                        child: pw.Text(s.footerRight, style: smallBold),
+                      ),
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 4),
+                pw.Row(
+                  children: [
+                    pw.Expanded(
+                      child: pw.Text(
+                        "Address",
+                        style: const pw.TextStyle(fontSize: 7),
+                      ),
+                    ),
+                    pw.Expanded(
+                      child: pw.Align(
+                        alignment: pw.Alignment.centerRight,
+                        child: pw.Text(
+                          s.labels.pageText,
+                          style: const pw.TextStyle(fontSize: 7),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 4),
+                pw.Text(s.footerUrl, style: const pw.TextStyle(fontSize: 7)),
+              ],
+            ],
           );
         },
       ),
     );
 
-    await Printing.layoutPdf(
-      onLayout: (PdfPageFormat format) async => doc.save(),
+    return doc.save();
+  }
+
+  static pw.Widget _kv(String k, String v, pw.TextStyle ks, pw.TextStyle vs) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 2),
+      child: pw.Row(
+        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+        children: [
+          pw.Text(k, style: ks),
+          pw.Text(v, style: vs),
+        ],
+      ),
     );
   }
 
-  void _showColumnSettings() {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text("Configure Columns"),
-          content: SizedBox(
-            width: double.maxFinite,
-            child: StatefulBuilder(
-              builder: (context, setStateDialog) {
-                return Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    ...activeColumns.map(
-                      (col) => ListTile(
-                        title: Text(col.label),
-                        subtitle: Text("Key: ${col.key}"),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete, color: Colors.red),
-                          onPressed: () {
-                            setStateDialog(() {
-                              activeColumns.remove(col);
-                            });
-                            _createContentAndPerformLayout();
-                          },
-                        ),
-                      ),
-                    ),
-                    const Divider(),
-                    ElevatedButton.icon(
-                      icon: const Icon(Icons.add),
-                      label: const Text("Add 'Unit Type' Column"),
-                      onPressed: () {
-                        setStateDialog(() {
-                          if (!activeColumns.any((c) => c.key == 'unit')) {
-                            activeColumns.insert(
-                              2,
-                              TableColumn(
-                                label: "UNIT",
-                                key: "unit",
-                                widthWeight: 1.0,
-                                alignment: PrintAlignment.center,
-                              ),
-                            );
-                          }
-                        });
-                        _createContentAndPerformLayout();
-                      },
-                    ),
-                    const SizedBox(height: 8),
-                    ElevatedButton(
-                      child: const Text("Reset to Default (Even Spacing)"),
-                      onPressed: () {
-                        setStateDialog(() {
-                          activeColumns = [
-                            TableColumn(
-                              label: "DESCRIPTION",
-                              key: "description",
-                              widthWeight: 1.0,
-                              alignment: PrintAlignment.left,
-                            ),
-                            TableColumn(
-                              label: "QTY",
-                              key: "qty",
-                              widthWeight: 1.0,
-                              alignment: PrintAlignment.right,
-                            ),
-                            TableColumn(
-                              label: "PRICE",
-                              key: "price",
-                              widthWeight: 1.0,
-                              alignment: PrintAlignment.right,
-                            ),
-                            TableColumn(
-                              label: "TOTAL",
-                              key: "total",
-                              widthWeight: 1.0,
-                              alignment: PrintAlignment.right,
-                            ),
-                          ];
-                        });
-                        _createContentAndPerformLayout();
-                      },
-                    ),
-                  ],
-                );
-              },
+  static String _valueForCell(Map<String, dynamic> row, ColumnSpec c) {
+    final v = row[c.key];
+    if (v == null) return "";
+    if (v is num) return v.toStringAsFixed(2);
+    return v.toString();
+  }
+}
+
+class InvoiceScreen extends StatefulWidget {
+  const InvoiceScreen({super.key});
+
+  @override
+  State<InvoiceScreen> createState() => _InvoiceScreenState();
+}
+
+class _InvoiceScreenState extends State<InvoiceScreen> {
+  InvoiceSpec requestSpec = InvoiceSpec.defaults();
+
+  void _simulateIncomingNewColumn() {
+    setState(() {
+      requestSpec = InvoiceSpec.defaults().merge(
+        InvoiceSpec(
+          labels: Labels.defaults,
+          layout: LayoutSpec.defaults().merge(
+            LayoutSpec(
+              pageFormat: PdfPageFormat.a4,
+              margin: const pw.EdgeInsets.fromLTRB(20, 18, 20, 18),
+              gapSm: 5,
+              gapMd: 10,
+              lineThickness: 1,
+              titleSize: 18,
+              smallSize: 8,
+              tableHeaderSize: 8.5,
+              tableCellSize: 8.5,
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text("Close"),
+          meta: MetaSpec.defaults(),
+          blocks: BlocksSpec.defaults,
+          columns: const [
+            ColumnSpec(
+              key: "itemNo",
+              label: "ITEM NO",
+              weight: 1,
+              align: ColAlign.left,
+            ),
+            ColumnSpec(
+              key: "description",
+              label: "PRODUCT DESCRIPTION",
+              weight: 1,
+              align: ColAlign.left,
+            ),
+            ColumnSpec(
+              key: "batch",
+              label: "BATCH",
+              weight: 1,
+              align: ColAlign.center,
+            ),
+            ColumnSpec(
+              key: "unit",
+              label: "UNIT",
+              weight: 1,
+              align: ColAlign.center,
+            ),
+            ColumnSpec(
+              key: "qty",
+              label: "QUANTITY",
+              weight: 1,
+              align: ColAlign.right,
+            ),
+            ColumnSpec(
+              key: "total",
+              label: "LINE TOTAL",
+              weight: 1,
+              align: ColAlign.right,
             ),
           ],
-        );
-      },
-    );
+          rows: const [
+            {
+              "itemNo": "000000019",
+              "description": "Example with new column",
+              "batch": "B-7781",
+              "unit": "Piece",
+              "qty": 1,
+              "total": 4.31,
+            },
+          ],
+          currencyValue: "ILS",
+          barcodeValue: "2100000005",
+          footerLeft: "Bisan Enterprise Demo",
+          footerRight: "بيسان انتربرايز - نسخة تجريبية",
+          footerUrl: "https://qa.bisan.com:3333/login.html",
+        ),
+      );
+    });
+  }
+
+  Future<Uint8List> _build(PdfPageFormat format) {
+    return InvoiceRenderer.buildPdf(requestSpec, format);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Dynamic Invoice'),
+        title: const Text("Generic Invoice (Request-driven)"),
         actions: [
           IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: _showColumnSettings,
-            tooltip: "Configure Columns",
+            onPressed: _simulateIncomingNewColumn,
+            icon: const Icon(Icons.add),
+            tooltip: "Simulate: New Column From Request",
           ),
         ],
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: Center(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.vertical,
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: CustomPaint(
-                      size: Size(pageWidth, pageHeight),
-                      painter: PagePreviewPainter(
-                        pageWidth: pageWidth,
-                        pageHeight: pageHeight,
-                        margins: pageMargins,
-                        items: laidOutItems,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.all(20),
-            color: Colors.white,
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: _printDocument,
-              icon: const Icon(Icons.print),
-              label: const Text("PRINT INVOICE"),
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 15),
-                textStyle: const TextStyle(fontSize: 18),
-              ),
-            ),
-          ),
-        ],
+      body: PdfPreview(
+        build: _build,
+        canChangeOrientation: false,
+        canChangePageFormat: false,
+        allowPrinting: true,
+        allowSharing: true,
       ),
     );
   }
-}
-
-class PagePreviewPainter extends CustomPainter {
-  final double pageWidth;
-  final double pageHeight;
-  final EdgeInsets margins;
-  final List<PrintableItem> items;
-
-  PagePreviewPainter({
-    required this.pageWidth,
-    required this.pageHeight,
-    required this.margins,
-    required this.items,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    canvas.drawRect(
-      Rect.fromLTWH(2, 2, pageWidth, pageHeight),
-      Paint()
-        ..color = Colors.black26
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4.0),
-    );
-    canvas.drawRect(
-      Rect.fromLTWH(0, 0, pageWidth, pageHeight),
-      Paint()..color = Colors.white,
-    );
-    canvas.drawRect(
-      Rect.fromLTWH(0, 0, pageWidth, pageHeight),
-      Paint()..style = PaintingStyle.stroke,
-    );
-
-    for (var item in items) {
-      if (item.isSeparator) {
-        canvas.drawRect(item.finalRect, Paint()..color = Colors.black);
-        continue;
-      }
-
-      final textPainter = TextPainter(
-        text: TextSpan(
-          text: item.text,
-          style: item.isValid
-              ? item.style
-              : item.style.copyWith(color: Colors.red),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout(maxWidth: pageWidth);
-
-      textPainter.paint(canvas, item.finalRect.topLeft);
-
-      if (!item.isValid) {
-        canvas.drawRect(
-          item.finalRect,
-          Paint()
-            ..color = Colors.red
-            ..style = PaintingStyle.stroke,
-        );
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
