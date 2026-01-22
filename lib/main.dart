@@ -264,7 +264,7 @@ class InvoiceSpec {
       ColumnSpec(
         key: "description",
         label: "PRODUCT DESCRIPTION",
-        weight: 1,
+        weight: 3,
         align: ColAlign.left,
       ),
       ColumnSpec(key: "unit", label: "UNIT", weight: 1, align: ColAlign.center),
@@ -807,15 +807,19 @@ class _InvoiceScreenState extends State<InvoiceScreen> {
     });
   }
 
-  Future<Uint8List> _build(PdfPageFormat format) {
-    return InvoiceRenderer.buildPdf(requestSpec, format);
+  Future<void> _printDirectly() async {
+    await Printing.layoutPdf(
+      onLayout: (PdfPageFormat format) async {
+        return InvoiceRenderer.buildPdf(requestSpec, format);
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Generic Invoice (Request-driven)"),
+        title: const Text("Generic Invoice (Direct Print)"),
         actions: [
           IconButton(
             onPressed: _simulateIncomingNewColumn,
@@ -824,12 +828,31 @@ class _InvoiceScreenState extends State<InvoiceScreen> {
           ),
         ],
       ),
-      body: PdfPreview(
-        build: _build,
-        canChangeOrientation: false,
-        canChangePageFormat: false,
-        allowPrinting: true,
-        allowSharing: true,
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.print, size: 100, color: Colors.blue),
+            const SizedBox(height: 20),
+            const Text(
+              "Ready to Print",
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 40),
+            ElevatedButton.icon(
+              onPressed: _printDirectly,
+              icon: const Icon(Icons.print),
+              label: const Text("PRINT NOW"),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 40,
+                  vertical: 20,
+                ),
+                textStyle: const TextStyle(fontSize: 20),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
